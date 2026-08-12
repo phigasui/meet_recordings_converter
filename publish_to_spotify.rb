@@ -321,9 +321,16 @@ end
 
 # ---------- modes ----------
 
-def run_bootstrap(config)
+# Resolve the local feed.xml path. Honors --feed; otherwise defaults to a path
+# next to this script rather than CWD-relative, so running from another
+# directory doesn't silently read/write a different feed.xml.
+def local_feed_path(options)
+  options[:feed_path] || File.join(__dir__, DEFAULT_LOCAL_FEED_PATH)
+end
+
+def run_bootstrap(config, options)
   url = config['existing_rss_url']
-  local = DEFAULT_LOCAL_FEED_PATH
+  local = local_feed_path(options)
   puts "Downloading existing RSS from #{url} ..."
   unless download_url(url, local)
     warn 'Bootstrap failed: could not download existing RSS.'
@@ -344,8 +351,8 @@ def run_bootstrap(config)
   puts "Local copy: #{File.expand_path(local)}"
 end
 
-def run_publish_feed(config)
-  local = DEFAULT_LOCAL_FEED_PATH
+def run_publish_feed(config, options)
+  local = local_feed_path(options)
   unless File.file?(local)
     warn "Error: #{local} not found."
     warn 'Run a publish step (with --no-publish to stage) before --publish-feed.'
@@ -537,7 +544,7 @@ def run_publish(mp3_dir, config, options)
   schedule = resolve_schedule!(config, options)
   mp3_files = find_mp3_files!(mp3_dir)
 
-  local_feed = DEFAULT_LOCAL_FEED_PATH
+  local_feed = local_feed_path(options)
   feed = prepare_feed(config, local_feed)
   filename_to_notebook = fetch_filename_to_notebook_id_map
   puts
@@ -575,6 +582,8 @@ def parse_cli_args
       opts[:config_path] = args.shift
     when '--env'
       opts[:env_path] = args.shift
+    when '--feed'
+      opts[:feed_path] = args.shift
     when '-h', '--help'
       print_usage
       exit 0
@@ -607,6 +616,8 @@ def print_usage
       --no-publish    MP3 アップロードとローカル feed.xml への追記まで行い、
                       feed.xml の R2 アップロードはスキップします (公開前レビュー用)。
                       レビュー・修正後に --publish-feed で公開してください。
+      --feed <path>   ローカル feed.xml のパス。省略時はスクリプトと同じ
+                      ディレクトリの feed.xml を使用します。
 
     Publish-feed mode:
       ローカルの feed.xml をそのまま R2 にアップロードして公開します。
@@ -623,12 +634,12 @@ def main
   config = load_config(opts[:config_path] || DEFAULT_CONFIG_PATH)
 
   if opts[:bootstrap]
-    run_bootstrap(config)
+    run_bootstrap(config, opts)
     return
   end
 
   if opts[:publish_feed]
-    run_publish_feed(config)
+    run_publish_feed(config, opts)
     return
   end
 

@@ -45,7 +45,10 @@ class PublishRunPublishTest < Minitest::Test
         'r2' => { 'bucket' => 'b', 'account_id' => 'acc',
                   'public_base_url' => 'https://ex.com', 'key_prefix' => '' }
       }
-      options = { dry_run: true, start_date: '2026-01-01T09:00:00+09:00', interval_days: 7 }
+      options = {
+        dry_run: true, start_date: '2026-01-01T09:00:00+09:00', interval_days: 7,
+        feed_path: File.join(dir, 'feed.xml')
+      }
       capture_streams { run_publish(dir, config, options) }
     end
 
@@ -69,8 +72,8 @@ class PublishRunPublishTest < Minitest::Test
       %w[ep_existing.mp3 ep_nometa.mp3 ep_nonb.mp3 ep_ok.mp3].each do |name|
         File.write(File.join(dir, name), 'x' * 1024)
       end
-      # run_publish uses DEFAULT_LOCAL_FEED_PATH ('feed.xml') relative to CWD.
-      Dir.chdir(dir) { yield dir }
+      # The feed path is passed explicitly via options[:feed_path] (--feed).
+      yield dir
     end
   end
 
