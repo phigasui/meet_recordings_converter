@@ -3,6 +3,7 @@
 require 'open3'
 require 'json'
 require 'uri'
+require 'set'
 
 WAIT_TIMEOUT = 1200
 SLEEP_BETWEEN = 2

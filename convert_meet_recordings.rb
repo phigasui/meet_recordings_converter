@@ -18,10 +18,11 @@ def convert_video_to_mp3(input_path, output_path)
   # -vn: No video recording
   # -ab 192k: Audio bitrate of 192kbps
   # -y: Overwrite output files without asking
-  ffmpeg_cmd = "ffmpeg -i \"#{input_path}\" -vn -ab 192k -y \"#{output_path}\""
+  # Pass argv as an array so filenames containing spaces, ':' or '"' are safe.
+  ffmpeg_cmd = ['ffmpeg', '-i', input_path, '-vn', '-ab', '192k', '-y', output_path]
 
   puts "Converting '#{File.basename(input_path)}' to MP3..."
-  stdout, stderr, status = Open3.capture3(ffmpeg_cmd)
+  stdout, stderr, status = Open3.capture3(*ffmpeg_cmd)
 
   if status.success?
     puts "Successfully converted '#{File.basename(input_path)}' to '#{File.basename(output_path)}'."
