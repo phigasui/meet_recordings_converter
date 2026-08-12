@@ -3,6 +3,7 @@
 require 'minitest/autorun'
 require 'tmpdir'
 require 'time'
+require 'stringio'
 require_relative '../publish_to_spotify'
 
 class PublishToSpotifyTest < Minitest::Test
@@ -111,5 +112,29 @@ class PublishToSpotifyTest < Minitest::Test
     ensure_itunes_namespace(doc)
     ensure_itunes_namespace(doc)
     assert_equal ITUNES_NS, doc.root.namespaces['itunes']
+  end
+
+  # ---- build_episode (pure episode assembly) ----
+
+  def test_build_episode_resolves_all_fields
+    Dir.mktmpdir do |dir|
+      mp3 = File.join(dir, 'ep.mp3')
+      File.write(mp3, 'x' * 2048)
+      config = { 'r2' => { 'key_prefix' => 'pod/', 'public_base_url' => 'https://ex.com' } }
+      schedule = { start_date: '2026-01-01T09:00:00+09:00', interval_days: 7 }
+      metadata = { title: 'T', description: 'D' }
+
+      episode = build_episode(mp3, 'ep name.mp3', metadata, 3661, schedule, 1, config)
+
+      assert_equal 'T', episode[:title]
+      assert_equal 'D', episode[:description]
+      assert_equal 'ep name.mp3', episode[:guid]
+      assert_equal 'pod/ep name.mp3', episode[:mp3_key]
+      assert_equal 'https://ex.com/pod/ep%20name.mp3', episode[:mp3_url]
+      assert_equal 2048, episode[:mp3_size]
+      assert_equal 3661, episode[:duration_sec]
+      # index 1 with a 7-day interval advances one week from the start date.
+      assert_equal 'Thu, 08 Jan 2026 09:00:00 +0900', episode[:pub_date].rfc2822
+    end
   end
 end

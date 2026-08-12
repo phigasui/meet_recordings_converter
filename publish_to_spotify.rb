@@ -387,117 +387,136 @@ def upload_episode(mp3_path, mp3_key, config)
   r2_upload(mp3_path, mp3_key, config, content_type: 'audio/mpeg')
 end
 
-def run_publish(mp3_dir, config, options)
-  start_date_str = options[:start_date] || config.dig('schedule', 'start_date')
+def resolve_schedule!(config, options)
+  start_date = options[:start_date] || config.dig('schedule', 'start_date')
   interval_days = options[:interval_days] || config.dig('schedule', 'interval_days') || 7
-  unless start_date_str
+  unless start_date
     warn 'Error: start_date is required (config.schedule.start_date or --start-date).'
     exit 1
   end
+  { start_date: start_date, interval_days: interval_days }
+end
 
+def find_mp3_files!(mp3_dir)
   mp3_files = Dir.glob(File.join(mp3_dir, '*.mp3')).sort
   if mp3_files.empty?
     warn "No MP3 files found in #{mp3_dir}"
     exit 1
   end
+  mp3_files
+end
 
-  local_feed = DEFAULT_LOCAL_FEED_PATH
+# Fetch the current feed.xml from R2 into local_feed and parse it, returning the
+# REXML document alongside the set of guids already present.
+def prepare_feed(config, local_feed)
   fetch_current_feed(config, local_feed)
   doc = load_feed(local_feed)
   ensure_itunes_namespace(doc)
-  guids = existing_guids(doc)
-  filename_to_notebook = fetch_filename_to_notebook_id_map
-  puts
+  { doc: doc, guids: existing_guids(doc) }
+end
 
-  added = 0
-  skipped = 0
-  failed = 0
+# Assemble the fully-resolved fields for one episode. Pure aside from File.size,
+# so it is exercised directly by unit tests.
+def build_episode(mp3, filename, metadata, duration_sec, schedule, index, config)
+  {
+    title: metadata[:title],
+    description: metadata[:description],
+    guid: filename,
+    pub_date: compute_pub_date(schedule[:start_date], schedule[:interval_days], index),
+    mp3_key: r2_key(config, filename),
+    mp3_url: r2_public_url(config, filename),
+    mp3_size: File.size(mp3),
+    duration_sec: duration_sec
+  }
+end
+
+def print_dry_run(episode)
+  puts '  [dry-run] would upload MP3 and add item:'
+  puts "    title:    #{episode[:title]}"
+  puts "    pubDate:  #{episode[:pub_date].rfc2822}"
+  puts "    duration: #{format_duration(episode[:duration_sec])} (#{episode[:duration_sec].to_i}s)"
+  puts "    url:      #{episode[:mp3_url]}"
+end
+
+# Process a single MP3. Returns [status, sleep_after] where status is one of
+# :added / :skipped / :failed and sleep_after is true only after a real upload
+# (so the caller paces R2 requests). Prints per-episode progress but not the
+# trailing blank line (the caller owns that).
+def publish_one_episode(mp3, filename, feed, filename_to_notebook, schedule, index, config, options)
+  if feed[:guids].include?(filename)
+    puts '  Skipped (already in feed)'
+    return [:skipped, false]
+  end
+
+  notebook_id = filename_to_notebook[filename]
+  unless notebook_id
+    warn '  WARN: No notebook found for this MP3; skipping'
+    return [:failed, false]
+  end
+
+  metadata = parse_metadata(fetch_metadata_note_text(notebook_id))
+  unless metadata
+    warn "  WARN: Could not parse '#{PODCAST_NOTE_TITLE}' note; skipping"
+    return [:failed, false]
+  end
+
+  duration_sec = mp3_duration_seconds(mp3)
+  unless duration_sec
+    warn '  WARN: ffprobe failed; skipping'
+    return [:failed, false]
+  end
+
+  episode = build_episode(mp3, filename, metadata, duration_sec, schedule, index, config)
+
+  if options[:dry_run]
+    print_dry_run(episode)
+    return [:added, false]
+  end
+
+  puts "  Uploading MP3 to #{episode[:mp3_key]} ..."
+  return [:failed, false] unless upload_episode(mp3, episode[:mp3_key], config)
+
+  append_item(
+    feed[:doc],
+    title: episode[:title],
+    description: episode[:description],
+    pub_date: episode[:pub_date],
+    guid: episode[:guid],
+    mp3_url: episode[:mp3_url],
+    mp3_size: episode[:mp3_size],
+    duration_sec: episode[:duration_sec]
+  )
+  feed[:guids].add(filename)
+  puts "  Added: '#{episode[:title]}' (pubDate: #{episode[:pub_date].rfc2822})"
+  [:added, true]
+end
+
+def publish_episodes(mp3_files, feed, filename_to_notebook, schedule, config, options)
+  counts = { added: 0, skipped: 0, failed: 0 }
   next_index = 0
 
   mp3_files.each_with_index do |mp3, i|
     filename = File.basename(mp3)
-    title_base = File.basename(mp3, '.mp3')
-    puts "[#{i + 1}/#{mp3_files.size}] #{title_base}"
+    puts "[#{i + 1}/#{mp3_files.size}] #{File.basename(mp3, '.mp3')}"
 
-    if guids.include?(filename)
-      puts '  Skipped (already in feed)'
-      skipped += 1
-      puts
-      next
-    end
-
-    notebook_id = filename_to_notebook[filename]
-    unless notebook_id
-      warn '  WARN: No notebook found for this MP3; skipping'
-      failed += 1
-      puts
-      next
-    end
-
-    metadata_text = fetch_metadata_note_text(notebook_id)
-    metadata = parse_metadata(metadata_text)
-    unless metadata
-      warn "  WARN: Could not parse '#{PODCAST_NOTE_TITLE}' note; skipping"
-      failed += 1
-      puts
-      next
-    end
-
-    duration_sec = mp3_duration_seconds(mp3)
-    unless duration_sec
-      warn '  WARN: ffprobe failed; skipping'
-      failed += 1
-      puts
-      next
-    end
-
-    mp3_size = File.size(mp3)
-    pub_date = compute_pub_date(start_date_str, interval_days, next_index)
-    mp3_key = r2_key(config, filename)
-    mp3_url = r2_public_url(config, filename)
-
-    if options[:dry_run]
-      puts '  [dry-run] would upload MP3 and add item:'
-      puts "    title:    #{metadata[:title]}"
-      puts "    pubDate:  #{pub_date.rfc2822}"
-      puts "    duration: #{format_duration(duration_sec)} (#{duration_sec.to_i}s)"
-      puts "    url:      #{mp3_url}"
-      added += 1
-      next_index += 1
-      puts
-      next
-    end
-
-    puts "  Uploading MP3 to #{mp3_key} ..."
-    unless upload_episode(mp3, mp3_key, config)
-      failed += 1
-      puts
-      next
-    end
-
-    append_item(
-      doc,
-      title: metadata[:title],
-      description: metadata[:description],
-      pub_date: pub_date,
-      guid: filename,
-      mp3_url: mp3_url,
-      mp3_size: mp3_size,
-      duration_sec: duration_sec
+    status, sleep_after = publish_one_episode(
+      mp3, filename, feed, filename_to_notebook, schedule, next_index, config, options
     )
-    guids.add(filename)
-    added += 1
-    next_index += 1
+    counts[status] += 1
+    next_index += 1 if status == :added
 
-    puts "  Added: '#{metadata[:title]}' (pubDate: #{pub_date.rfc2822})"
     puts
-    sleep SLEEP_BETWEEN
+    sleep SLEEP_BETWEEN if sleep_after
   end
 
-  if added.positive? && !options[:dry_run]
-    write_feed(doc, local_feed)
+  counts
+end
+
+def finalize_feed!(feed, counts, local_feed, config, options)
+  if counts[:added].positive? && !options[:dry_run]
+    write_feed(feed[:doc], local_feed)
     if options[:no_publish]
-      puts "Staged #{added} item(s) in #{File.expand_path(local_feed)} (feed.xml NOT uploaded)."
+      puts "Staged #{counts[:added]} item(s) in #{File.expand_path(local_feed)} (feed.xml NOT uploaded)."
       puts 'Review/edit titles and descriptions, then publish with:'
       puts "  ruby #{$PROGRAM_NAME} --publish-feed"
     else
@@ -512,10 +531,24 @@ def run_publish(mp3_dir, config, options)
   elsif options[:dry_run]
     puts '(dry-run: feed.xml not modified)'
   end
+end
+
+def run_publish(mp3_dir, config, options)
+  schedule = resolve_schedule!(config, options)
+  mp3_files = find_mp3_files!(mp3_dir)
+
+  local_feed = DEFAULT_LOCAL_FEED_PATH
+  feed = prepare_feed(config, local_feed)
+  filename_to_notebook = fetch_filename_to_notebook_id_map
+  puts
+
+  counts = publish_episodes(mp3_files, feed, filename_to_notebook, schedule, config, options)
+
+  finalize_feed!(feed, counts, local_feed, config, options)
 
   puts
   puts "=== Done - #{Time.now} ==="
-  puts "Added: #{added}, Skipped: #{skipped}, Failed: #{failed}, Total: #{mp3_files.size}"
+  puts "Added: #{counts[:added]}, Skipped: #{counts[:skipped]}, Failed: #{counts[:failed]}, Total: #{mp3_files.size}"
 end
 
 # ---------- CLI ----------
