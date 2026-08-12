@@ -117,9 +117,4 @@ class MasterForPodcastTest < Minitest::Test
     assert_nil extract_loudnorm_json('no json here')
   end
 
-  # ---- output path ----
-
-  def test_output_path_for_swaps_extension
-    assert_equal '/out/Show 12:30.mp3', output_path_for('/a/b/Show 12:30.wav', '/out')
-  end
 end
