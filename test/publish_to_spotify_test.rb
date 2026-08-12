@@ -8,40 +8,8 @@ require_relative '../publish_to_spotify'
 class PublishToSpotifyTest < Minitest::Test
   FIXTURES = File.join(__dir__, 'fixtures')
 
-  # ---- nlm escape normalization (the fragile parsing contract) ----
-
-  def test_unescape_once_handles_newline_and_brackets
-    assert_equal "a\nb", unescape_once('a\\nb')
-    assert_equal 'x[1]y', unescape_once('x\\[1\\]y')
-  end
-
-  def test_unescape_once_handles_tab_return_quote_backslash
-    assert_equal "\t\r\"\\", unescape_once('\\t\\r\\"\\\\')
-  end
-
-  def test_normalize_literal_escapes_single_level
-    assert_equal "line1\nline2", normalize_literal_escapes('line1\\nline2')
-  end
-
-  def test_normalize_literal_escapes_illegal_json_brackets
-    # nlm returns "sources_used": \[1\] which JSON.parse can't handle.
-    assert_equal 'brackets [1]', normalize_literal_escapes('brackets \\[1\\]')
-  end
-
-  def test_normalize_literal_escapes_multi_level
-    # Double-escaped newline should collapse to a real newline within 5 passes.
-    assert_equal "a\nb", normalize_literal_escapes('a\\\\nb')
-  end
-
-  def test_normalize_literal_escapes_is_idempotent_on_clean_text
-    clean = "already clean\nno escapes"
-    assert_equal clean, normalize_literal_escapes(clean)
-  end
-
-  def test_normalize_literal_escapes_passes_through_non_string
-    assert_nil normalize_literal_escapes(nil)
-    assert_equal 42, normalize_literal_escapes(42)
-  end
+  # nlm escape normalization now lives in PodcastToolkit::Nlm; see
+  # podcast_toolkit_nlm_test.rb for its contract tests.
 
   # ---- citation stripping & metadata parsing ----
 

@@ -9,6 +9,7 @@ require 'set'
 require 'time'
 require 'uri'
 require 'yaml'
+require_relative 'lib/podcast_toolkit/nlm'
 
 # Cloudflare R2 にマスタリング済み MP3 と RSS フィード (feed.xml) をアップロードし、
 # Spotify for Creators など RSS ベースの Podcast プラットフォームに配信するためのスクリプト。
@@ -24,7 +25,7 @@ require 'yaml'
 #                 (Spotify 側で RSS フィード URL を新 URL に差し替える初期セットアップ)
 #   <MP3_DIR>   : マスタリング済み MP3 と NotebookLM のメタデータからエピソードを追加
 
-PODCAST_NOTE_TITLE = 'Podcast 公開用メタデータ'
+PODCAST_NOTE_TITLE = PodcastToolkit::Nlm::PODCAST_NOTE_TITLE
 DEFAULT_CONFIG_PATH = 'podcast.yml'
 DEFAULT_ENV_PATH = '.env'
 DEFAULT_LOCAL_FEED_PATH = 'feed.xml'
@@ -200,32 +201,6 @@ rescue JSON::ParserError
   {}
 end
 
-def unescape_once(text)
-  text.gsub(/\\([\[\]\\"nrt])/) do
-    case Regexp.last_match(1)
-    when 'n' then "\n"
-    when 'r' then "\r"
-    when 't' then "\t"
-    else Regexp.last_match(1)
-    end
-  end
-end
-
-# nlm のレスポンスは "\\n" のように改行や角括弧が多重エスケープされて
-# 返ってくるケースがある (sources_used が空の場合など)。安定するまで
-# 一段ずつエスケープを解除する。
-def normalize_literal_escapes(text)
-  return text unless text.is_a?(String)
-
-  5.times do
-    next_text = unescape_once(text)
-    return text if next_text == text
-
-    text = next_text
-  end
-  text
-end
-
 def fetch_metadata_note_text(notebook_id)
   stdout, _stderr, status = Open3.capture3('nlm', 'note', 'list', notebook_id, '--json')
   return nil unless status.success?
@@ -259,7 +234,7 @@ def fetch_metadata_note_text(notebook_id)
 
   # nlm の一部レスポンスでは改行などが二重エスケープされ \n がリテラル文字として
   # 残るため、改行・タブ・クォートを実体に戻す。
-  normalize_literal_escapes(answer)
+  PodcastToolkit::Nlm.normalize_literal_escapes(answer)
 rescue JSON::ParserError
   nil
 end
